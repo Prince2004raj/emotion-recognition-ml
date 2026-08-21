@@ -1,0 +1,79 @@
+"""
+Convolutional Neural Network for emotion recognition.
+Input: 48x48x1 grayscale face crops.
+"""
+import json
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.utils.class_weight import compute_class_weight
+
+tf.random.set_seed(42)
+
+X_train = np.load("arrays/X_train.npy")[..., np.newaxis]
+X_test = np.load("arrays/X_test.npy")[..., np.newaxis]
+y_train = np.load("arrays/y_train.npy")
+y_test = np.load("arrays/y_test.npy")
+classes = open("arrays/classes.txt").read().splitlines()
+n_classes = len(classes)
+
+class_weights = compute_class_weight("balanced", classes=np.unique(y_train), y=y_train)
+class_weight_dict = {i: w for i, w in enumerate(class_weights)}
+
+model = models.Sequential([
+    layers.Input(shape=(48, 48, 1)),
+    layers.Conv2D(32, 3, activation="relu", padding="same"),
+    layers.BatchNormalization(),
+    layers.MaxPooling2D(2),
+    layers.Conv2D(64, 3, activation="relu", padding="same"),
+    layers.BatchNormalization(),
+    layers.MaxPooling2D(2),
+    layers.Conv2D(128, 3, activation="relu", padding="same"),
+    layers.BatchNormalization(),
+    layers.MaxPooling2D(2),
+    layers.Flatten(),
+    layers.Dropout(0.4),
+    layers.Dense(128, activation="relu"),
+    layers.Dropout(0.3),
+    layers.Dense(n_classes, activation="softmax"),
+])
+
+model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+model.summary()
+
+early_stop = tf.keras.callbacks.EarlyStopping(
+    monitor="val_accuracy", patience=6, restore_best_weights=True
+)
+
+history = model.fit(
+    X_train, y_train,
+    validation_split=0.15,
+    epochs=40,
+    batch_size=32,
+    class_weight=class_weight_dict,
+    callbacks=[early_stop],
+    verbose=2,
+)
+
+y_prob = model.predict(X_test)
+y_pred = np.argmax(y_prob, axis=1)
+acc = accuracy_score(y_test, y_pred)
+print(f"\nTest accuracy: {acc:.4f}")
+report = classification_report(y_test, y_pred, target_names=classes, output_dict=True)
+cm = confusion_matrix(y_test, y_pred)
+print(classification_report(y_test, y_pred, target_names=classes))
+
+results = {
+    "model": "CNN",
+    "accuracy": float(acc),
+    "classification_report": report,
+    "confusion_matrix": cm.tolist(),
+    "classes": classes,
+    "history": {k: [float(x) for x in v] for k, v in history.history.items()},
+    "epochs_trained": len(history.history["loss"]),
+}
+with open("results_cnn.json", "w") as f:
+    json.dump(results, f, indent=2)
+model.save("cnn_model.keras")
+print("Saved results_cnn.json and cnn_model.keras")
